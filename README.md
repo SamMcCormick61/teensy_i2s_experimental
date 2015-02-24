@@ -1,4 +1,12 @@
-# I2S for Teensy3
+# experimental I2S development for Teensy 3.1
+
+This is a fork of the [original library](https://github.com/hughpyle/teensy-i2s) by Hugh Pyle.
+In this experimental version, basic support for 24 and 32 bit I2S half-frames (in contrast to the default 16bit) is evaluated.
+**Be warned:** several existing features may be broken in the development process. Do not rely on this library.
+
+
+---
+Previous introduction:
 
 The I2S protocol is designed for high-quality digital audio between devices.
 
