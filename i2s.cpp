@@ -32,17 +32,20 @@
 I2S_class I2STx0(0);
 I2S_class I2SRx0(1);
 
-// Buffers for 16 bit audio samples.
+// Buffers for audio samples.
+
+// -- DMA buffers disabled for now --
+
 // Static (not class members) because we want to put them in the DMAMEM area.
 // DMA:
-static _I2S_SAMPLE_T DMAMEM _dma_Rx_Buffer_A[DMA_BUFFER_SIZE];
+/*static _I2S_SAMPLE_T DMAMEM _dma_Rx_Buffer_A[DMA_BUFFER_SIZE];
 static _I2S_SAMPLE_T DMAMEM _dma_Rx_Buffer_B[DMA_BUFFER_SIZE];
 static _I2S_SAMPLE_T DMAMEM _dma_Tx_Buffer_A[DMA_BUFFER_SIZE];
-static _I2S_SAMPLE_T DMAMEM _dma_Tx_Buffer_B[DMA_BUFFER_SIZE];
+static _I2S_SAMPLE_T DMAMEM _dma_Tx_Buffer_B[DMA_BUFFER_SIZE]; */
+
 // I2S:
 static _I2S_SAMPLE_T _i2s_Rx_Buffer[I2S_FRAME_SIZE];
 static _I2S_SAMPLE_T _i2s_Tx_Buffer[I2S_FRAME_SIZE];
-
 
 
 I2S_class::I2S_class(uint8_t isRx)
@@ -56,6 +59,11 @@ void I2S_class::begin(uint8_t clk, void (*fptr)( _I2S_SAMPLE_T *pBuf))
     clock = clk;
     useDMA = false;
     fnI2SCallback = fptr;
+    /*
+    // counters were used for debugging, did not show problems
+    fec_counter = 0;
+    sef_counter = 0;
+    */
     init();
 }
 
@@ -193,9 +201,21 @@ void I2S_class::io_init(void)
     switch( (I2S_PIN_PATTERN) & 0xF0 )
     {
         case I2S_RX_PIN_PATTERN_1:
-            CORE_PIN11_CONFIG = PORT_PCR_DSE | PORT_PCR_MUX(4);     // I2S0_RX_BCLK
-            CORE_PIN12_CONFIG = PORT_PCR_DSE | PORT_PCR_MUX(4);     // I2S0_RX_FS
-            CORE_PIN13_CONFIG = PORT_PCR_DSE | PORT_PCR_MUX(4);     // I2S0_RXD0
+            // PORT_PCR_MUX(4) => set the port control register MUX settings to binary 100 = "alternative 4"
+
+            // DSE = "high drive strength" option for pins
+	    // empirical test: disabling DSE reduces (!) the unwanted ringing / overshoot of the clock signal
+            // CORE_PIN11_CONFIG = PORT_PCR_DSE | PORT_PCR_MUX(4); 
+            // CORE_PIN12_CONFIG = PORT_PCR_DSE | PORT_PCR_MUX(4);   
+
+	    // I2S0_RX_BCLK: for 48kHz sampling frequency and 2x 32bit half-frames, this is 3.08 MHz
+            CORE_PIN11_CONFIG =   PORT_PCR_MUX(4);     // I2S0_RX_BCLK
+            // I2S0_RX_FS : this clock has exactly the sampling frequency and is used 
+            // for left/right half channel indication and frame syncronisation
+            CORE_PIN12_CONFIG =   PORT_PCR_MUX(4);     // I2S0_RX_FS 
+
+
+            CORE_PIN13_CONFIG =   PORT_PCR_MUX(4);     // I2S0_RXD0, data input
             break;
         case I2S_RX_PIN_PATTERN_2:
             CORE_PIN11_CONFIG = PORT_PCR_DSE | PORT_PCR_MUX(4);     // I2S0_RX_BCLK
@@ -231,11 +251,9 @@ void I2S_class::io_init(void)
     }
 }
 
-
 void I2S_class::clock_init()
 {
-    // Disable system clock to the I2S module
-    //SIM_SCGC6 &= ~(SIM_SCGC6_I2S);
+    // enable
     SIM_SCGC6 |= SIM_SCGC6_I2S;
 
     if(clock==I2S_CLOCK_EXTERNAL)
@@ -247,8 +265,18 @@ void I2S_class::clock_init()
     }
     else
     {
-        // Select input clock 0 and output enable
+        // Select input clock to 0 = system clock and output enable
+    	// warning: This field [MICS] cannot be changed while the MCLK divider is enabled.
         I2S0_MCR = I2S_MCR_MICS(0) | I2S_MCR_MOE;
+    	// TODO works with MICS(0), Stoffregen code suggests MICS(3)
+    
+        // FIXME code from different MCU:
+        // FIXME I2S0_MCR |= 0x43000000; //Output Enable. Mux IRC48MCLK into Fractional Divider
+        // FIXME MOE / MICS is similar, values are different between both chips!
+        	
+        // FIXME code from different MCU:
+        // FIXME this does not appear to apply to the teensy and would be an illegal setting (see p.240 ref manual)
+        // FIXME SIM_SOPT2 |= 0x30000; //I2S Clocking Sourced from 48MHz IRC48MCLK 
         
         // 8k, 12k, 16k, 32k, etc all clock the I2S module at 12.288 MHz
         // 11025Hz, 22050, 44100 clock the I2S module at 11.2896 MHz
@@ -258,9 +286,12 @@ void I2S_class::clock_init()
                 // Divide to get the 11.2896 MHz from 96MHz (96* (2/17))
                 I2S0_MDR = I2S_MDR_FRACT(1) | I2S_MDR_DIVIDE(16);
                 break;
+
+            // remember: switch cases without break "fall trough" to later cases
             case I2S_CLOCK_8K_INTERNAL:
             case I2S_CLOCK_32K_INTERNAL:
             case I2S_CLOCK_48K_INTERNAL:
+		// uses default case
             default:
                 // Divide to get the 12.2880 MHz from 96MHz (96* (16/125))
                 I2S0_MDR = I2S_MDR_FRACT(15) | I2S_MDR_DIVIDE(124);
@@ -271,7 +302,6 @@ void I2S_class::clock_init()
     // re-enable system clock to the I2S module
     SIM_SCGC6 |= SIM_SCGC6_I2S;
 }
-
 
 
 void I2S_class::init()
@@ -286,11 +316,11 @@ void I2S_class::init()
         
     if( useDMA )
     {
-        dma_buffer_init();
+    /*    dma_buffer_init();
         if( receive )
             dma_receive_init();
         else
-            dma_transmit_init();
+            dma_transmit_init(); */
     }
 
 }
@@ -308,7 +338,7 @@ void I2S_class::init()
 
 void I2S_class::i2s_transmit_init()
 {
-    // transmit disable while we configure everything
+  /*  // transmit disable while we configure everything
     I2S0_TCSR &= ~(I2S_TCSR_TE);
     
     // Transmitter remains enabled until (and TE set) the end of the current frame
@@ -342,7 +372,7 @@ void I2S_class::i2s_transmit_init()
     // --------------------------------------------------------------------------------
     I2S0_TCR5  = I2S_TCR5_W0W(SYWD);        // bits per word, first frame
     I2S0_TCR5 |= I2S_TCR5_WNW(SYWD);        // bits per word, nth frame
-    I2S0_TCR5 |= I2S_TCR5_FBT(0x0f);        // index shifted for FIFO (TODO depend on I2S_BUFFER_BIT_DEPTH)
+    I2S0_TCR5 |= I2S_TCR5_FBT(0x0f);        // index shifted for FIFO (TODO depend on I2S_BUFFER_BIT_DEPTH)*/
 }
 
 void I2S_class::i2s_receive_init()
@@ -352,28 +382,41 @@ void I2S_class::i2s_receive_init()
 
     // Receiver remains enabled until (and TE set) the end of the current frame
     for( int i=0; i<1000 && (I2S0_RCSR & I2S_RCSR_RE); i++ );
+
+    // if still enabled, abort?
     if( I2S0_RCSR & I2S_RCSR_RE )
         return;
 
-    I2S0_RMR = 0;                           // No word mask
+    I2S0_RMR = 0x00;    // 0 = No word mask = stereo. 1 and 2 mask either left or right audio side
     // --------------------------------------------------------------------------------
-    I2S0_RCR1  = I2S_RCR1_RFW(FRSZ);        // set FIFO watermark
+    // datasheet documentation is sparse for FIFO watermark settings
+    I2S0_RCR1  = I2S_RCR1_RFW(1); // watermark at half fifo size 
+
     // --------------------------------------------------------------------------------
-    I2S0_RCR2  = I2S_RCR2_SYNC(1);          // synchronous with the transmitter
+    // I2S0_RCR2  = I2S_RCR2_SYNC(1);          // SYNC(1) is: "synchronous with the transmitter" - we don't want that!
+    I2S0_RCR2  = I2S_RCR2_SYNC(0);          // async RX 
     I2S0_RCR2 |= I2S_RCR2_BCP;              // BCLK polarity: active low
     if( clock != I2S_CLOCK_EXTERNAL )
     {
-        I2S0_RCR2 |= I2S_RCR2_MSEL(0);          // use MCLK as BCLK source
-        I2S0_RCR2 |= I2S_RCR2_DIV(7);           // (DIV + 1) * 2, 12.288 MHz / 4 = 3.072 MHz
+        // experimental, Stoffregen default library does this, conflicts with MSEL(0)
+        I2S0_RCR2 |= I2S_RCR2_MSEL(1);          // 0 = uses BUSCLK as BCLK source
+        // FIXME similar to I2S0_RCR2 |= 0x4000000; //MCLK MSEL to BCLK
+
+        // I2S0_RCR2 |= I2S_RCR2_DIV(7);           // MCLK will be divided by ((DIV + 1) * 2) -> 12.288 MHz / ((1+1 ) * 2) = 3.072 MHz
+        I2S0_RCR2 |= I2S_RCR2_DIV(1);			 //  3.072 MHz / 64 bit per frame = 48kHz sampling
         I2S0_RCR2 |= I2S_RCR2_BCD;              // BCLK is generated internally in Master mode
     }
     // --------------------------------------------------------------------------------
-    I2S0_RCR3  = I2S_RCR3_RCE;              // receive data channel is enabled
+    I2S0_RCR3  = I2S_RCR3_RCE;              // enable receive data channel 0 is enabled
     // --------------------------------------------------------------------------------
     I2S0_RCR4  = I2S_RCR4_FRSZ(FRSZ);       // frame size in words (plus one)
     I2S0_RCR4 |= I2S_RCR4_SYWD(SYWD);       // bit width of a word (plus one)
+
+    // some I2S device specific settings
     I2S0_RCR4 |= I2S_RCR4_MF;               // MSB (most significant bit) first
+    I2S0_RCR4 |= I2S_RCR4_FSP;		    // Frame Sync Polarity, Frame sync is active low.
     I2S0_RCR4 |= I2S_RCR4_FSE;              // Frame sync one bit before the frame
+
     if( clock != I2S_CLOCK_EXTERNAL )
     {
         I2S0_RCR4 |= I2S_RCR4_FSD;              // WCLK is generated internally (master mode)
@@ -381,12 +424,15 @@ void I2S_class::i2s_receive_init()
     // --------------------------------------------------------------------------------
     I2S0_RCR5  = I2S_RCR5_W0W(SYWD);        // bits per word, first frame
     I2S0_RCR5 |= I2S_RCR5_WNW(SYWD);        // bits per word, nth frame
-    I2S0_RCR5 |= I2S_RCR5_FBT(0x0f);        // index shifted for FIFO (TODO depend on I2S_BUFFER_BIT_DEPTH)
+    I2S0_RCR5 |= I2S_RCR5_FBT(SYWD);        // index shifted for FIFO
+
+    /* explanation for I2S_RCR5_FBT
+      16 bit form: I2S0_RCR5 |= I2S_RCR5_FBT(0x0f);
+      32 bit form: I2S0_RCR5 |= I2S_RCR5_FBT(0x1f);
+    */ 
 }
 
-
 /* I2S class-instance callbacks */
-
 void I2S_class::i2s_tx_callback(void)
 {
     if(!(I2S0_TCSR & I2S_TCSR_FRF))  return;
@@ -405,8 +451,14 @@ void I2S_class::i2s_tx_callback(void)
         //I2S0_TDR0 = (uint32_t)(_I2S_SAMPLE_T)(_i2s_Tx_Buffer[i]);
     //}
     
-    if(I2S0_TCSR & I2S_TCSR_FEF)  I2S0_TCSR |= I2S_TCSR_FEF; // clear if underrun
-    if(I2S0_TCSR & I2S_TCSR_SEF)  I2S0_TCSR |= I2S_TCSR_SEF; // clear if frame sync error
+    if(I2S0_TCSR & I2S_TCSR_FEF) {
+        I2S0_TCSR |= I2S_TCSR_FEF; // clear if underrun
+        fec_counter++;
+    }
+    if(I2S0_TCSR & I2S_TCSR_SEF) {
+        I2S0_TCSR |= I2S_TCSR_SEF; // clear if frame sync error
+        sef_counter++;
+    }
 }
 
 void I2S_class::i2s_rx_callback(void)
@@ -426,7 +478,6 @@ void I2S_class::i2s_rx_callback(void)
 
 
 /* I2S ISR (used when you're not using DMA) */
-
 void i2s0_tx_isr(void)
 {
     I2STx0.i2s_tx_callback();
@@ -437,13 +488,13 @@ void i2s0_rx_isr(void)
     I2SRx0.i2s_rx_callback();
 }
 
-
+// DISABLED DMA CODE BELOW
 
 /*
  * DMA
  * DMA channel 0 is used for transmit, and channel 1 for receive.
  */
-
+/*
 void I2S_class::dma_buffer_init(void)
 {
     if(receive)
@@ -516,7 +567,7 @@ void I2S_class::dma_transmit_init(void)
     DMA_SERQ = DMA_SERQ_SERQ(0);
 
     // enable DMAMUX
-    DMAMUX0_CHCFG0 |= DMAMUX_ENABLE /* | DMAMUX_TRIG */;
+    DMAMUX0_CHCFG0 |= DMAMUX_ENABLE ; //  | DMAMUX_TRIG 
 
     // Set active
     DMA_TCD0_CSR |= DMA_CSR_ACTIVE;
@@ -580,7 +631,7 @@ void I2S_class::dma_receive_init(void)
     DMA_SERQ = DMA_SERQ_SERQ(1);
 
     // enable DMAMUX
-    DMAMUX0_CHCFG1 |= DMAMUX_ENABLE /* | DMAMUX_TRIG */;
+    DMAMUX0_CHCFG1 |= DMAMUX_ENABLE ; // | DMAMUX_TRIG 
 
     // Set active
     DMA_TCD1_CSR |= DMA_CSR_ACTIVE;
@@ -602,10 +653,10 @@ void I2S_class::dma_stop(void)
     // Clear Enable-flag of the appropriate channel
     DMA_CERQ = DMA_CERQ_CERQ( receive );
 }
-
+*/
 
 /* DMA class-instance callbacks */
-
+/*
 void I2S_class::dma_tx_callback(void)
 {
     _I2S_SAMPLE_T *dmaBuf;
@@ -649,10 +700,10 @@ void I2S_class::dma_rx_callback(void)
     // while you read the other
     fnDMACallback( yourBuf, DMA_BUFFER_SIZE );
 }
-
+*/
 
 /* DMA ISR */
- 
+ /*
 void dma_ch0_isr(void)                  // DMA channel 0 for Tx
 {
     I2STx0.dma_tx_callback();
@@ -664,3 +715,4 @@ void dma_ch1_isr(void)                  // DMA channel 1 for Rx
     I2SRx0.dma_rx_callback();
     DMA_CINT = DMA_CINT_CINT(1);        // Clear the interrupt
 }
+*/

@@ -2,11 +2,23 @@
 
 This is a fork of the [original library](https://github.com/hughpyle/teensy-i2s) by Hugh Pyle.
 In this experimental version, basic support for 24 and 32 bit I2S half-frames (in contrast to the default 16bit) is evaluated.
-**Be warned:** several existing features may be broken in the development process. Do not rely on this library.
+**Be warned:** several existing features were deliberately broken during the development process.
+Do not rely on this library.
 
+**approach**:
+* currently developing **RX part only**, **interrupt-based only** (no DMA!)
+* I2S in 48kHz master mode for teensy 3.1 running 96Mhz
+* reading stereo (2 half-channel) RX data 
+* usage of pins 11, 12 and 13
+* proof of concept: streaming the audio data continuously over USB serial interface without data loss - **works!**
+
+Most notably, RX support for the InvenSense INMP441 I2S microphone is achieved.
+This microphone requires 32bit samples to be taken. (Real audio content is 24bit)
+
+When this USB "serial" stream is recorded from the first byte and saved to a file, it can be reformatted to a "real" audio file with e.g. audacity or the sox command line program.
 
 ---
-Previous introduction:
+Previous library introduction:
 
 The I2S protocol is designed for high-quality digital audio between devices.
 

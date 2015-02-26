@@ -1,5 +1,5 @@
 /*
- * I2S interface for Teensy 3.0
+ * I2S interface for Teensy 3.0 / 3.1
  * Fork this on github https://github.com/hughpyle/teensy-i2s
  *
  * Copyright (c) 2013 by Hugh Pyle and contributors.
@@ -32,8 +32,16 @@
 
 // Audio configuration.  Edit these here if you need to.
 #define I2S_FRAME_SIZE         2            // Number of frames, 2=stereo
+
+/*
+// default 16 bit mode
 #define I2S_IO_BIT_DEPTH       16           // Number of bits per sample in the physical data (8, 16 or 32)
 #define I2S_BUFFER_BIT_DEPTH   16           // Number of bits per sample in the DMA buffer (8, 16 or 32)
+*/
+
+// experimental 32 bit mode
+#define I2S_IO_BIT_DEPTH       32           // Number of bits per sample in the physical data (8, 16 or 32)
+#define I2S_BUFFER_BIT_DEPTH   32           // Number of bits per sample in the DMA buffer (8, 16 or 32)
 
 // Clock type constants
 #define I2S_CLOCK_EXTERNAL     0            // The bit clock is provided by an external device (e.g. the codec)
@@ -124,6 +132,9 @@ class I2S_class
         void dma_stop();
         
     public:
+	uint32_t fec_counter; 
+	uint32_t sef_counter;
+
         /* Don't construct your own, there are two ready-made instances, one for receive and one for transmit */
         I2S_class(uint8_t isRx);
         
